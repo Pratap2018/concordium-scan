@@ -56,12 +56,10 @@ use derive_more::Display;
 use futures::prelude::*;
 use prometheus_client::registry::Registry;
 use sqlx::PgPool;
-use std::{
-    cmp::{max, min},
-    error::Error,
-    str::FromStr,
-    sync::Arc,
-};
+use std::{cmp::{max, min}, error::Error, fmt, str::FromStr, sync::Arc};
+use std::fmt::{format, Formatter};
+use strum::IntoEnumIterator;
+use strum_macros::{EnumIter, IntoStaticStr};
 use tokio::{net::TcpListener, sync::broadcast};
 use tokio_stream::wrappers::errors::BroadcastStreamRecvError;
 use tokio_util::sync::CancellationToken;
@@ -825,7 +823,7 @@ impl AccountReward {
     }
 }
 
-#[derive(Enum, Copy, Clone, PartialEq, Eq, sqlx::Type)]
+#[derive(Enum, Copy, Clone, PartialEq, Eq, sqlx::Type, IntoStaticStr, EnumIter)]
 #[sqlx(type_name = "reward_type")]
 pub enum RewardType {
     FinalizationReward,
@@ -1285,50 +1283,50 @@ impl Account {
             before,
             config.reward_connection_limit,
         )?;
+        let reward_types: String = RewardType::iter()
+            .iter()
+            .map(|reward| format!("'{}'", reward.to_string()))
+            .join(", ");
         let mut rewards = sqlx::query_as!(
             AccountReward,
-            r#"
-            SELECT
-                id as "id!",
-                block_height as "block_height!",
-                timestamp,
-                entry_type as "entry_type!: AccountStatementEntryType",
-                amount as "amount!"
-            FROM (
+                r#"
                 SELECT
-                    id,
-                    block_height,
-                    blocks.slot_time as "timestamp",
-                    entry_type,
-                    amount
-                FROM account_statements
-                JOIN
-                    blocks
-                ON
-                    blocks.height = account_statements.block_height
-                WHERE
-                    entry_type IN (
-                        'FinalizationReward',
-                        'FoundationReward',
-                        'BakerReward',
-                        'TransactionFeeReward'
-                    )
-                    AND account_index = $5
-                    AND id > $1
-                    AND id < $2
+                    id as "id!",
+                    block_height as "block_height!",
+                    timestamp,
+                    entry_type as "entry_type!: AccountStatementEntryType",
+                    amount as "amount!"
+                FROM (
+                    SELECT
+                        id,
+                        block_height,
+                        blocks.slot_time as "timestamp",
+                        entry_type,
+                        amount
+                    FROM account_statements
+                    JOIN
+                        blocks
+                    ON
+                        blocks.height = account_statements.block_height
+                    WHERE
+                        entry_type IN ($6) -- Insert dynamic reward types
+                        AND account_index = $5
+                        AND id > $1
+                        AND id < $2
+                    ORDER BY
+                        CASE WHEN $4 THEN id END DESC,
+                        CASE WHEN NOT $4 THEN id END ASC
+                    LIMIT $3
+                )
                 ORDER BY
-                    CASE WHEN $4 THEN id END DESC,
-                    CASE WHEN NOT $4 THEN id END ASC
-                LIMIT $3
-            )
-            ORDER BY
-                id ASC
-            "#,
+                    id ASC
+                "#,
             query.from,
             query.to,
             query.limit,
             query.desc,
-            &self.index
+            &self.index,
+            reward_types
         )
         .fetch(pool);
 
@@ -1352,8 +1350,14 @@ impl Account {
             let result = sqlx::query!(
                 r#"
                     SELECT MAX(id) as max_id, MIN(id) as min_id
-                    FROM account_rewards
+                    FROM account_statements
                     WHERE account_index = $1
+                        AND entry_type IN (
+                            'FinalizationReward',
+                            'FoundationReward',
+                            'BakerReward',
+                            'TransactionFeeReward'
+                        )
                 "#,
                 &self.index
             )
