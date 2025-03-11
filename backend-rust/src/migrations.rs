@@ -203,14 +203,16 @@ pub enum SchemaVersion {
     TrackRemovedBakers,
     #[display("0013:Fix delegated_restake_earnings data in accounts")]
     FixDelegatedStakeEarnings,
+    #[display("0014:Add tracking of rewards paid out to bakers and delagators in payday blocks")]
+    PaydayPoolRewards,
 }
 impl SchemaVersion {
     /// The minimum supported database schema version for the API.
     /// Fails at startup if any breaking database schema versions have been
     /// introduced since this version.
-    pub const API_SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion::TrackRemovedBakers;
+    pub const API_SUPPORTED_SCHEMA_VERSION: SchemaVersion = SchemaVersion::PaydayPoolRewards;
     /// The latest known version of the schema.
-    const LATEST: SchemaVersion = SchemaVersion::FixDelegatedStakeEarnings;
+    const LATEST: SchemaVersion = SchemaVersion::PaydayPoolRewards;
 
     /// Parse version number into a database schema version.
     /// None if the version is unknown.
@@ -239,6 +241,7 @@ impl SchemaVersion {
             SchemaVersion::RankingByLotteryPower => false,
             SchemaVersion::TrackRemovedBakers => false,
             SchemaVersion::FixDelegatedStakeEarnings => false,
+            SchemaVersion::PaydayPoolRewards => false,
         }
     }
 
@@ -330,7 +333,13 @@ impl SchemaVersion {
                     .await?;
                 SchemaVersion::FixDelegatedStakeEarnings
             }
-            SchemaVersion::FixDelegatedStakeEarnings => unimplemented!(
+            SchemaVersion::FixDelegatedStakeEarnings => {
+                tx.as_mut()
+                .execute(sqlx::raw_sql(include_str!("./migrations/m0014-pool-rewards.sql")))
+                .await?;
+                SchemaVersion::PaydayPoolRewards
+            }
+            SchemaVersion::PaydayPoolRewards => unimplemented!(
                 "No migration implemented for database schema version {}",
                 self.as_i64()
             ),
