@@ -4,6 +4,7 @@
 mod account;
 mod account_metrics;
 mod baker;
+mod passive_delegation;
 mod block;
 mod block_metrics;
 mod contract;
@@ -160,6 +161,7 @@ pub struct ApiServiceConfig {
 #[derive(MergedObject, Default)]
 pub struct Query(
     BaseQuery,
+    passive_delegation::QueryPassiveDelegation,
     baker::QueryBaker,
     block::QueryBlocks,
     transaction::QueryTransactions,
